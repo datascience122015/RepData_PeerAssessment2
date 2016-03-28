@@ -1,0 +1,297 @@
+---
+title: 'Storm Event Data (1996 to 2011) Analysis: Health and Economic Impact  in USA'
+author: "Suparna Sen"
+date: "25 March 2016"
+output: html_document
+---
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+# I. Synopsis
+The Storm Events Database contains the records used to create the official NOAA Storm Data publication.This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+The database currently contains data from January 1950 to December 2015, as entered by NOAA's National Weather Service (NWS).
+
+The purpose of this analysis is to reveal the major types of storm events and their impact on both:
+* the human population (deaths and injuries), and 
+* the economic impact (property and crop damage.)
+
+# II. Data Processing
+* Package used: R Statistical Package
+* The analysis was performed on [Storm Events Database](http://www.ncdc.noaa.gov/stormevents/ftp.jsp), provided by [National Climatic Data Center](http://www.ncdc.noaa.gov/). 
+* Data Source : [comma-separated-value Data File](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)
+* Documentations on the Data: 
+    + [National Weather Service Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+    + [Storm Events Layout](http://ire.org/media/uploads/files/datalibrary/samplefiles/Storm%20Events/layout08.doc)
+*  A researcher named Mauricio Linhares has developed a substitiution table to eliminate the various misspellings and duplicate entries in the EVNTYPE field.
+    + With the help of [replacements.csv](http://mauricio.github.io/2014/12/23/getting-and-clearning-data.html), a csv file from researcher Maricio Lihnares,  that contains the mappings from the original to the canonical event type. With help of this the event categories can be reduced to a more manageable numbers.
+    
+
+## II-a. Data Loading and Extracting
+```{r cache=TRUE}
+setwd("E:/COURSERA/REPRODUCIBLE RESEARCH/assignment-final-week-4/repdata-data-StormData")
+if (!file.exists("repdata-data-StormData.csv")) {
+  download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", 
+                file="repdata-data-StormData.csv.bz2")
+  dateDownloaded=date()
+  
+  bunzip2(file="repdata-data-StormData.csv.bz2",destname="repdata-data-StormData.csv")
+  unlink("repdata-data-StormData.csv.bz2")
+}
+
+dataset<-read.csv("repdata-data-StormData.csv",header=TRUE,sep = ",", stringsAsFactors = FALSE)
+#Variable names in the dataset
+names(dataset)
+```
+## II-b. Data Cleaning and Exploratory Analysis
+```{r echo=TRUE}
+
+# Dimensions - Records and Variables
+dim(dataset)
+# Number of NA records
+sum(is.na(dataset))
+# Display the Structure 
+str(dataset)
+#Number of unique events 
+events = unique(dataset$EVTYPE)
+length(events)
+#The diferent variable heads in the data set
+names(dataset)
+```
+## II-c. Data of Interest for this Analysis 
+**Variables**
+
+* BGN_DATE: Date the storm event began. Currently a factor
+* STATE: State abbreviation and postal code. Currently a factor, read as a character.
+* EVTYPE: Type of storm event. Take note that similar storm events can be listed using different wording e.g. 'coastal flood' and 'coastal flooding'. Take note of this if you want to run a query grouping by event type. Currently a factor.
+* FATALITIES: Number directly killed. Currently numeric.
+* INJURIES: Number directly injured.Currently numeric.
+* PROPDMG: Property damage in whole numbers and hundredths. Currently numeric. Needs adjusting with PROPDMGEXP to get actual cost ($US).
+* PROPDMGEXP: A multiplier where Hundred (H), Thousand (K), Million (M), Billion (B), read as a character, telling us how much to multiply the PROPDMG variable by to get actual cost ($US).
+* CROPDMG: Crop damage in whole numbers and hundredths. Currently numeric, needs adjusting with CROPDMGEXP to get actual cost ($US).
+* CROPDMGEXP: A multiplier where Hundred (H), Thousand (K), Million (M), Billion (B),currently a factor, read in as character, telling us how much to multiply the CROPDMG variable by to get actual cost($US).
+
+**Window frame of data to be used:** events that have happened since 1996, 
+```{r echo=TRUE}
+# Subset of interest
+stormDataset <- dataset[, c("BGN_DATE", "COUNTY", "COUNTYNAME", "STATE", "END_DATE","EVTYPE",
+                            "FATALITIES","INJURIES","PROPDMG","PROPDMGEXP","CROPDMG","CROPDMGEXP")]
+dim(stormDataset)
+```
+* Scanned through the data using unique(stormDataset$EVTYPE) and found typo errors and many duplications in the event types (ENVTYP)
+```{r echo=TRUE}
+#Converting all Event types to upper case and Triming of data - remove extraneous spaces from the beginning or the end of the event names
+stormDataset$EVTYPE <- toupper(gsub("^\\s+|\\s+$", "", stormDataset$EVTYPE))
+
+#Discarding data element as "SUMMARY" as event type
+stormDataset=stormDataset[!grepl("SUMMARY", stormDataset$EVTYPE), ]
+dim(stormDataset)
+
+#Filtering out NON-AVAILABLE data for "FATALITIES","INJURIES","PROPDMG","PROPDMGEXP","CROPDMG","CROPDMGEXP" to reduce the set
+stormDataset = stormDataset[stormDataset$FATALITIES>0 | 
+                              stormDataset$INJURIES > 0 | 
+                              stormDataset$PROPDMG > 0 | 
+                              stormDataset$PROPDMGEXP>0 | 
+                              stormDataset$CROPDMGEXP>0 |
+                              stormDataset$CROPDMG > 0, ]
+#new dimensions are
+dim(stormDataset)
+```
+## II-d. Downloading [replacements.csv](http://mauricio.github.io/2014/12/23/getting-and-clearning-data.html), a csv file from researcher Maricio Lihnares,  that contains the mappings from the original to the canonical event type. 
+```{r echo=TRUE}
+replacements <- read.csv("replacements.csv", stringsAsFactors=FALSE)
+eventFor <- function( evtype ) {
+  replacements[replacements$event == evtype,]$actual
+}
+stormDataset$CLNEVTYPE <- sapply(stormDataset$EVTYPE, eventFor)
+
+#Count of unique cleaned event types
+length(unique(stormDataset$CLNEVTYPE))
+
+#Selecting data within the window - since 1996 and creating a new dataframe
+stormDataset$BGN_DATE=as.Date(stormDataset$BGN_DATE, format = "%m/%d/%Y")
+stormData1996 = stormDataset[(stormDataset$BGN_DATE >= "1996-01-01"), ]
+dim(stormData1996)
+# Unique event count in the new dataframe
+events = unique(stormData1996$EVTYPE)
+length(events)
+#Summary Information: of the new data frame
+summary(stormData1996)
+```
+
+## II-e. Refactor PROPDMG, CROPDMG, PROPDMGEXP & CROPDMGEXP to absolute damage values
+* The multipliers PROPDMGEXP and CROPDMGEXP has values K (for thousands), M (for millions) and B (for billions) of USD
+```{r echo=TRUE}
+#Converting to uppercase
+stormData1996$PROPDMGEXP <- toupper(stormData1996$PROPDMGEXP)
+stormData1996$CROPDMGEXP <- toupper(stormData1996$CROPDMGEXP)
+#Having a look at the unique values of PRODMGEXP 
+unique(stormData1996$PROPDMGEXP)
+#Having a look at the unique values of CROPDMGEXP 
+unique(stormData1996$CROPDMGEXP)
+```
+
+* Function to convert symbol to a power of 10 (for use with PROPDMGEXP & CROPDMGEXP)
+```{r echo=TRUE}
+toTenPower <- function(x){
+  if(is.numeric(x)) {
+    x <- x
+  }
+  else if(grepl("h", x, ignore.case=TRUE)) {
+    x <- 2
+  }
+  else if(grepl("k", x, ignore.case=TRUE)) {
+    x <- 3
+  }
+  else if(grepl("m", x, ignore.case=TRUE)) {
+    x <- 6
+  }
+  else if(grepl("b", x, ignore.case=TRUE)) {
+    x <- 9
+  }
+  else if(x == "" || x == " "){
+    x <- 0
+  }
+  else{
+    x <- NA
+  }
+  x
+}
+```
+* Function to take two parameters num and exp and convert it to one absolute value. non integers become 0
+```{r echo=TRUE}
+calculateAmount <- function(num, exp){
+  pow <- toTenPower(exp)
+  if(is.numeric(num)){
+    num <- num * (10 ^ pow)
+  }
+  
+  if(!is.numeric(num)){
+    num <- 0
+  }
+  
+  num
+}
+
+#creating 2 new fields for calculated propDamage & cropDamage and add them to one damageTotal field
+
+stormData1996$PROPERTY_DAMAGE <- mapply(calculateAmount, 
+                                        stormData1996$PROPDMG, stormData1996$PROPDMGEXP)
+stormData1996$CROP_DAMAGE <- mapply(calculateAmount, 
+                                    stormData1996$CROPDMG, stormData1996$CROPDMGEXP)
+stormData1996$TOTAL_DAMAGE<-stormData1996$PROPERTY_DAMAGE+stormData1996$CROP_DAMAGE
+
+```
+
+# III. RESULTS
+* DATA ANALYSIS & RESULTS (Top 10 most harmful events)
+
+## III-A.	Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+* Aggregating event types by total fatalities 
+``` {r echo=TRUE}
+fatalities <- aggregate(stormData1996$FATALITIES ~ stormData1996$EVTYPE, FUN=sum)
+dim(fatalities)
+names(fatalities)
+colnames(fatalities)=c("Event","Fatalities")
+
+#Finding the top 10 most harmful events causing fatalities
+fatalitiesSrt=
+  fatalities [order(-fatalities$Fatalities),][1:10,]
+```
+
+* Aggregating event types by total injuries
+``` {r echo=TRUE}
+injuries <- aggregate(stormData1996$INJURIES ~ stormData1996$EVTYPE, FUN=sum)
+dim(injuries)
+names(injuries)
+colnames(injuries)=c("Event","Injuries")
+
+#Finding the top 10 most harmful events causing injuries
+injuriesSrt=
+  injuries [order(-injuries$Injuries),][1:10,]
+```
+
+###  Plotting A (Dangerous Events with respect to Population Health)
+``` {r echo=TRUE}
+par(mar=c(8, 4.1, 4.1, 1))
+plot.new()
+
+
+par(mfrow=c(1,2),oma = c(0, 0, 3, 0))
+
+barplot(names.arg=fatalitiesSrt[,1], 
+        height=fatalitiesSrt[,2], ylab="Total Number of Fatalities", col= grey.colors(10, alpha=1),
+        cex.names=0.7, cex.axis=0.7, cex.lab=0.8, las=2, main="Fatalities")
+
+barplot(names.arg=injuriesSrt[,1], 
+        height=injuriesSrt[,2], ylab="Total Number of Injuries",col= grey.colors(10,alpha = 1), 
+        cex.names=0.7, cex.axis=0.7, cex.lab=0.8,las=2, main=" Injuries")
+mtext("Top 10 Weather Events: 1996-2011", outer = TRUE, cex = 1.5)
+```
+
+
+***Readings***
+The above plots indicate that:
+
+* The three top events, causing  **Fatalities** are : 
+    + Excessive Heat
+    + Tornado
+    + Flash Flood
+* The three top events, causing  **Injuries** are : 
+    + Tornado
+    + Flood
+    + Excessive Heat
+
+
+## III-B.  Across the United States, which types of events have the greatest economic consequences?
+* Aggregating event types by total Proper Damage
+```{r echo=TRUE}
+propertyDamage <- aggregate(stormData1996$PROPERTY_DAMAGE ~ stormData1996$EVTYPE, FUN=sum)
+colnames(propertyDamage)=c("Event","Property Damage")
+
+#Finding the top 10 most harmful events causing Property Damage
+pDamageSrt=
+  propertyDamage [order(-propertyDamage$"Property Damage"),][1:10,]
+
+```
+* Aggregating event types by total Crop Damage
+```{r echo=TRUE}
+cropDamage <- aggregate(stormData1996$CROP_DAMAGE ~ stormData1996$EVTYPE, FUN=sum)
+dim(cropDamage)
+colnames(cropDamage)=c("Event","Crop Damage")
+
+#Finding the top 10 most harmful events causing Crop Damage
+cDamageSrt=
+  cropDamage [order(-cropDamage$"Crop Damage"),][1:10,]
+
+```
+###  Plotting B (Economic Effects of Weather Events)
+``` {r echo=TRUE}
+par(mar=c(8, 4.1, 4.1, 1))
+plot.new()
+
+par(mfrow=c(1,2),oma = c(0, 0, 3, 0))
+
+barplot(names.arg=pDamageSrt[,1], 
+        height=pDamageSrt[,2]/10, ylab="Cost of Property Damage ($) ", col= heat.colors(10,alpha = 1),
+        cex.names=0.7,  cex.lab=0.8, las=2, main="Property Damage", yaxt="n")
+axis(2,cex.axis=0.7)
+barplot(names.arg=cDamageSrt[,1], 
+        height=cDamageSrt[,2], ylab="Cost of Crop Damage ($) ",col=heat.colors(10,alpha = 1), 
+        cex.names=0.7,  cex.lab=0.8,las=2, main=" Crop Damage", yaxt="n")
+axis(2,cex.axis=0.7)
+mtext("Top 10 Weather Events: 1996-2011", outer = TRUE, cex = 1.5)
+```
+
+
+***Readings***
+The above plots indicate that:
+
+* The three top events, causing  **Property damages** are : 
+      + Flood, 
+      + Hurricane/Typhoon
+      + Storm Surge
+      
+* The three top events, causing  **Crop damages** are : 
+    + Drought 
+    + Flood 
+    + Hurricane 
